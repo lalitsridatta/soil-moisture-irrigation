@@ -1,0 +1,36 @@
+spec_version: 1
+name: soil-moisture-irrigation
+version: 0.1.0
+description: |
+  A real-world agricultural RL environment where an AI agent manages irrigation decisions based on IoT soil moisture sensors.
+
+  Crops need moisture to survive — too little and they stress, too much and they rot. The agent reads daily sensor data and decides: irrigate or wait?
+
+  3 tasks of increasing difficulty:
+  - single_field_timing (easy): 1 corn field, 7 days, clean sensor
+  - noisy_sensor (medium): same but sensor has Gaussian noise — agent must reason under uncertainty
+  - multi_field_allocation (hard): 3 fields (wheat/corn/tomatoes), 10 days, limited water budget of 100 units
+
+  Each irrigation costs 20 water units and adds 25% moisture. Moisture drops 8-12% per day naturally. Rain events add 15-20% moisture (25% chance/day, forecast is 70% accurate).
+
+  Crop health starts at 100. Drops 15 points when moisture is too low, 10 points when over-irrigated. Final score is based on crop health at episode end.
+tags: [openenv, agriculture, iot, irrigation, real-world]
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+
+tasks:
+  - name: single_field_timing
+    difficulty: easy
+    max_steps: 7
+  - name: noisy_sensor
+    difficulty: medium
+    max_steps: 7
+  - name: multi_field_allocation
+    difficulty: hard
+    max_steps: 10
+
+action_space: "discrete: irrigate/wait + optional field_id for hard task"
+observation_space: "sensor readings, weather forecast, water budget, days remaining"
+reward_range: [0.0, 1.0]

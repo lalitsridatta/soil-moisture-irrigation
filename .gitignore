@@ -1,0 +1,11 @@
+env/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+soil_moisture_env/_refs/
+soil_moisture_env/__pycache__/
+soil_moisture_env/server/__pycache__/
+tips.txt
+*.egg-info/
+.DS_Store
