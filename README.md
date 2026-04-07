@@ -1,18 +1,26 @@
 # 🌱 Soil Moisture Irrigation Environment
 
-A real-world agricultural reinforcement learning environment built for the [Meta PyTorch OpenEnv Hackathon](https://huggingface.co/spaces/Lsd45/soil-moisture-irrigation). An AI agent manages crop irrigation decisions based on IoT soil moisture sensor readings — the same problem smart farming systems solve every day.
+> A real-world agricultural RL environment where an AI agent manages crop irrigation using IoT soil moisture sensors — the same decision loop used in precision farming systems today.
 
-**Live demo:** https://huggingface.co/spaces/Lsd45/soil-moisture-irrigation
+**Live demo:** https://huggingface.co/spaces/Lsd45/soil-moisture-irrigation  
+**HF Space:** https://huggingface.co/spaces/Lsd45/soil-moisture-irrigation  
+**GitHub:** https://github.com/lalitsridatta/soil-moisture-irrigation
 
 ---
 
-## Why This Was Built
+## The Real-World Problem
 
-Most RL environments are games or toys. This one simulates a real problem:
+Every day on a modern farm, automated systems ask: *should we irrigate this field today?*
 
-> A farm has soil moisture sensors in each field. Every day, an automated system must decide — irrigate or wait? Too little water and crops stress. Too much and roots rot. The agent must learn to read sensor data, account for weather forecasts, and manage a limited water budget across multiple fields.
+Too little water → crops stress and lose yield. Too much → roots rot. Weather is uncertain. Sensors are noisy. Water budgets are limited. Multiple crops compete for the same resource.
 
-This is exactly what precision agriculture systems do. Training an AI agent on this environment produces a model that can make better irrigation decisions than simple threshold-based rules.
+This environment simulates exactly that. An AI agent trained here learns to:
+- Read noisy IoT sensor data and infer true soil conditions
+- Time irrigation decisions across a multi-day episode
+- Allocate scarce water across fields with different crop priorities
+- Use weather forecasts (which are only 70% accurate) to plan ahead
+
+This is not a toy. Precision irrigation is a $4B+ industry and a direct application of sequential decision-making under uncertainty.
 
 ---
 
@@ -21,20 +29,21 @@ This is exactly what precision agriculture systems do. Training an AI agent on t
 Each episode runs for 7–10 days. Every day:
 
 1. Agent receives **sensor readings** — soil moisture %, temperature, weather forecast
-2. Agent picks an action: `irrigate` or `wait` (hard task: also picks which field)
+2. Agent picks: `irrigate` or `wait` (hard task: also picks which field 0/1/2)
 3. Environment advances one day — moisture drops naturally, rain may fall
-4. Agent gets a **reward** based on crop health change
+4. Agent receives a **step reward** based on crop health change
 
 ### Moisture Dynamics
 
 ```
-Every day:    moisture drops 8–12% naturally (random, seeded)
+Every day:    moisture drops 8-12% naturally (seeded random)
 Irrigation:   moisture +25%, costs 20 water units
-Rain event:   moisture +15–20% (25% chance/day, forecast 70% accurate)
-Range:        moisture always clamped to 0–100%
+Rain event:   moisture +15-20% (25% chance/day)
+Forecast:     70% accurate — sometimes says rain but none comes
+Range:        moisture clamped to 0-100%
 ```
 
-### Crop Thresholds
+### Crop Health Rules
 
 | Crop | Stress below | Rot above | Value weight |
 |---|---|---|---|
@@ -42,20 +51,21 @@ Range:        moisture always clamped to 0–100%
 | Wheat | 25% | 80% | 0.2 |
 | Tomatoes | 35% | 80% | 0.5 |
 
-- Moisture below stress threshold → `crop_health -= 15` that step
-- Moisture above rot threshold → `crop_health -= 10` that step
+- Moisture drops below stress threshold → `crop_health -= 15` that step
+- Moisture exceeds rot threshold → `crop_health -= 10` that step
+- Crop health starts at 100, never recovers once lost
 
 ### Step Reward Formula
 
 ```python
 step_reward = (
     + 0.4 * crop_health_delta        # reward for maintaining/improving health
-    - 0.3 * over_irrigation_penalty  # penalty if moisture exceeded rot threshold
-    - 0.2 * stress_penalty           # penalty if moisture dropped below stress threshold
-    - 0.1 * budget_waste             # penalty for overspending (hard task only)
+    - 0.3 * over_irrigation_penalty  # 1.0 if moisture exceeded rot threshold
+    - 0.2 * stress_penalty           # 1.0 if moisture dropped below stress threshold
+    - 0.1 * budget_waste             # overspend fraction (hard task only)
 )
-# Normalized to [0, 1]
-step_reward = max(0.0, min(1.0, (step_reward + 1) / 2))
+# Normalized strictly within (0.01, 0.99)
+step_reward = max(0.01, min(0.99, (step_reward + 1) / 2))
 ```
 
 ---
@@ -63,25 +73,56 @@ step_reward = max(0.0, min(1.0, (step_reward + 1) / 2))
 ## The 3 Tasks
 
 ### Task 1 — `single_field_timing` (Easy)
-- 1 field of corn, 7 days, clean sensor (no noise)
-- You see exactly what the moisture is
-- Goal: keep moisture between 30–85%
-- Random agent score: ~0.35
+- 1 field of corn, 7 days, **clean sensor** (no noise)
+- Agent sees exact moisture readings
+- Goal: keep moisture between 30–85% across all 7 days
+- Score: `crop_health / 100` at episode end
+- A good agent should score 0.7+
 
 ### Task 2 — `noisy_sensor` (Medium)
-- 1 field of corn, 7 days, sensor noise = Gaussian(0, std=15)
-- Reading might say 60% when real moisture is 45%
-- Extra penalty for irrigating when real moisture > 70% (wasteful)
-- Agent must reason under uncertainty
-- Random agent score: ~0.25
+- 1 field of corn, 7 days, **sensor noise = Gaussian(0, std=15)**
+- Sensor might read 65% when real moisture is 45% — agent must reason under uncertainty
+- Extra penalty: irrigating when real moisture > 70% counts as wasteful
+- Score: `(health * 0.7) + (1 - waste_ratio) * 0.3`
+- Requires uncertainty-aware decision making
 
 ### Task 3 — `multi_field_allocation` (Hard)
-- 3 fields: wheat, corn, tomatoes
-- 10 days, total water budget = 100 units (5 irrigations max)
-- Agent chooses which field to irrigate each day
-- Tomato failure (health < 20) = immediate −0.4 penalty
-- Weather forecast provided — save water if rain is coming
-- Random agent score: ~0.20
+- 3 fields: wheat, corn, **tomatoes** (highest value crop)
+- 10 days, **water budget = 60 units** (only 3 irrigations total)
+- Agent must choose which field to irrigate — can't water all of them
+- Tomato crop failure (health < 20) = immediate −0.4 score penalty
+- Weather forecast provided — smart agents save water when rain is likely
+- Score: `(tomato*0.5 + corn*0.3 + wheat*0.2)/100 + budget_efficiency - tomato_penalty`
+- Frontier models score ~0.2–0.4 on this task
+
+---
+
+## Observation Space
+
+```json
+{
+  "sensor_readings": [
+    {"field_id": 0, "raw_moisture": 42.3, "temperature": 22.1, "day": 3}
+  ],
+  "weather_forecast": "rain",          // "rain", "dry", or "unknown"
+  "water_budget_remaining": 40.0,      // null for easy/medium tasks
+  "crop_type": "corn",                 // null for hard task (3 fields)
+  "days_remaining": 4,
+  "last_action_result": "irrigated_field_0"
+}
+```
+
+## Action Space
+
+```json
+// Easy / Medium:
+{"action": "irrigate"}
+{"action": "wait"}
+
+// Hard task (specify which field):
+{"action": "irrigate", "field_id": 2}
+{"action": "wait"}
+```
 
 ---
 
@@ -89,55 +130,50 @@ step_reward = max(0.0, min(1.0, (step_reward + 1) / 2))
 
 ```
 soil-moisture-irrigation/
-├── inference.py                          ← Run the AI agent against all 3 tasks
+├── inference.py                              <- AI agent runner (all 3 tasks)
 ├── soil_moisture_env/
-│   ├── models.py                         ← IrrigationAction, IrrigationObservation, IrrigationState
-│   ├── client.py                         ← WebSocket client for connecting to the server
-│   ├── simulator.py                      ← Synthetic soil moisture dynamics (seeded, deterministic)
-│   ├── tasks.py                          ← Task configs + grader score functions
-│   ├── openenv.yaml                      ← OpenEnv manifest
-│   ├── pyproject.toml                    ← Package metadata
+│   ├── models.py                             <- Typed Pydantic models
+│   ├── simulator.py                          <- Deterministic moisture dynamics
+│   ├── tasks.py                              <- Task configs + grader functions
+│   ├── client.py                             <- WebSocket client
+│   ├── openenv.yaml                          <- OpenEnv manifest
 │   └── server/
-│       ├── soil_moisture_env_environment.py  ← reset(), step(), state() logic
-│       ├── app.py                        ← FastAPI server
-│       └── Dockerfile                    ← Container (exposes port 7860)
+│       ├── soil_moisture_env_environment.py  <- reset() / step() / state()
+│       ├── app.py                            <- FastAPI server
+│       └── Dockerfile                        <- Port 7860
 ```
 
 ---
 
-## How to Test It
+## How to Test
 
-### Option 1 — Live Playground (no setup needed)
+### Option 1 — Live Playground (zero setup)
 
-Go to https://huggingface.co/spaces/Lsd45/soil-moisture-irrigation
+**https://huggingface.co/spaces/Lsd45/soil-moisture-irrigation**
 
-1. Click **Reset** — starts a new episode, returns first sensor reading
-2. Pick action (`irrigate` or `wait`) + optional Field Id → click **Step**
-3. Watch `crop_health`, `real_moisture`, `reward` change each day
-4. Click **Get State** to see the hidden ground truth
-5. Episode ends when `done: true` (after 7 or 10 steps)
+1. Click **Reset** → choose task via body `{"task_name": "single_field_timing"}`
+2. Click **Step** → body `{"action": {"action": "irrigate", "field_id": 0}}`
+3. Click **Get State** → see hidden ground truth (real moisture, crop health)
+4. Repeat until `done: true`
 
 ### Option 2 — Run Locally
 
 ```bash
-# Clone and install
 git clone https://github.com/lalitsridatta/soil-moisture-irrigation
 cd soil-moisture-irrigation
 pip install openenv-core fastapi uvicorn openai
 
-# Start the server
+# Start server
 python -m uvicorn soil_moisture_env.server.app:app --host 0.0.0.0 --port 7860
 
-# Open Swagger UI in browser
-# http://localhost:7860/docs
+# Swagger UI at http://localhost:7860/docs
 ```
 
 ### Option 3 — Run the AI Agent
 
 ```bash
-# Set your HuggingFace token
-export HF_TOKEN="hf_your_token_here"   # Linux/Mac
-$env:HF_TOKEN="hf_your_token_here"     # Windows PowerShell
+export HF_TOKEN="hf_your_token_here"    # Linux/Mac
+$env:HF_TOKEN="hf_your_token_here"      # Windows PowerShell
 
 python inference.py
 ```
@@ -148,71 +184,32 @@ Expected output:
 [STEP] step=1 action=irrigate reward=0.50 done=false error=null
 [STEP] step=2 action=wait reward=0.50 done=false error=null
 ...
-[END] success=true steps=7 score=1.000 rewards=0.50,0.50,...
-```
-
-### Option 4 — Python Client
-
-```python
-import asyncio
-from soil_moisture_env import IrrigationAction, SoilMoistureEnv
-
-async def main():
-    async with SoilMoistureEnv(base_url="http://localhost:7860") as env:
-        result = await env.reset(task_name="single_field_timing")
-        obs = result.observation
-
-        for day in range(7):
-            moisture = obs.sensor_readings[0].raw_moisture
-            action = "irrigate" if moisture < 40 else "wait"
-            result = await env.step(IrrigationAction(action=action))
-            obs = result.observation
-            print(f"Day {day+1}: moisture={moisture:.1f}% action={action} reward={result.reward:.2f} done={result.done}")
-
-asyncio.run(main())
+[END] success=true steps=7 score=0.990 rewards=0.50,0.50,...
 ```
 
 ---
 
-## Understanding the Response
-
-When you call `/state` or click **Get State**, you see:
-
-```json
-{
-  "task_name": "single_field_timing",
-  "day": 3,
-  "real_moisture": [42.5],    // ground truth — hidden from agent in noisy tasks
-  "crop_health": [85.0],      // starts at 100, drops when moisture is wrong
-  "water_used": 20.0,         // units spent so far
-  "done": false,              // true when episode ends
-  "cumulative_reward": 1.5    // total reward accumulated
-}
-```
-
-A **good agent** keeps `crop_health` close to 100 by irrigating before moisture drops below the stress threshold, and avoids over-irrigating above the rot threshold.
-
----
-
-## API Endpoints
+## API Reference
 
 | Endpoint | Method | Body | Description |
 |---|---|---|---|
 | `/reset` | POST | `{"task_name": "single_field_timing"}` | Start new episode |
-| `/step` | POST | `{"action": {"action": "irrigate", "field_id": 0}}` | Take one action |
-| `/state` | GET | — | Full debug state |
-| `/health` | GET | — | Returns `{"status": "healthy"}` |
+| `/step` | POST | `{"action": {"action": "irrigate", "field_id": 0}}` | Take action |
+| `/state` | GET | — | Full debug state (real moisture, crop health) |
+| `/health` | GET | — | `{"status": "healthy"}` |
 | `/docs` | GET | — | Interactive Swagger UI |
 
 ---
 
-## Baseline Scores (Qwen/Qwen2.5-72B-Instruct)
+## Baseline Scores
+
+Evaluated with `Qwen/Qwen2.5-72B-Instruct` via HuggingFace router:
 
 | Task | Difficulty | Score |
 |---|---|---|
-| single_field_timing | Easy | 1.000 |
-| noisy_sensor | Medium | 0.895 |
-| multi_field_allocation | Hard | 0.820 |
+| `single_field_timing` | Easy | 0.990 |
+| `noisy_sensor` | Medium | 0.895 |
+| `multi_field_allocation` | Hard | 0.350 |
 
 ---
 
