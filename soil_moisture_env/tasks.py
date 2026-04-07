@@ -85,16 +85,15 @@ def compute_score(task_name: str, crop_health: list, water_used: float,
                   water_budget: float, wasteful_irrigations: int,
                   num_days: int, tomato_failed: bool) -> float:
     """
-    Compute final episode score (0.0 – 1.0) for a completed task.
+    Compute final episode score strictly within (0.0, 1.0) — exclusive.
     """
     if task_name == "single_field_timing":
-        return crop_health[0] / 100.0
+        score = crop_health[0] / 100.0
 
     elif task_name == "noisy_sensor":
         health_score = crop_health[0] / 100.0
         waste_ratio = wasteful_irrigations / max(num_days, 1)
         score = (health_score * 0.7) + ((1.0 - waste_ratio) * 0.3)
-        return max(0.0, min(1.0, score))
 
     elif task_name == "multi_field_allocation":
         wheat_h, corn_h, tomato_h = crop_health[0], crop_health[1], crop_health[2]
@@ -103,6 +102,9 @@ def compute_score(task_name: str, crop_health: list, water_used: float,
         budget_eff = (unused / water_budget) * 0.1
         tomato_penalty = 0.4 if tomato_failed else 0.0
         score = weighted + budget_eff - tomato_penalty
-        return max(0.0, min(1.0, score))
 
-    return 0.0
+    else:
+        score = 0.5
+
+    # Strictly within (0.0, 1.0) — validator rejects 0.0 and 1.0 exactly
+    return max(0.001, min(0.999, score))

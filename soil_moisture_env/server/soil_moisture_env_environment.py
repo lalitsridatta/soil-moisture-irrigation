@@ -153,7 +153,7 @@ class SoilMoistureEnvironment(Environment):
             - 0.2 * stress_penalty
             - 0.1 * budget_waste
         )
-        step_reward = max(0.0, min(1.0, (raw_reward + 1.0) / 2.0))
+        step_reward = max(0.001, min(0.999, (raw_reward + 1.0) / 2.0))
 
         self._cumulative_reward += step_reward
         self._days_remaining -= 1
