@@ -65,7 +65,8 @@ def _noisy_sensor() -> Dict[str, Any]:
 
 def _multi_field_allocation() -> Dict[str, Any]:
     """
-    Hard — 3 fields (wheat, corn, tomatoes), 10 days, water budget = 100.
+    Hard — 3 fields (wheat, corn, tomatoes), 10 days, water budget = 60.
+    Only 3 irrigations total — forces real trade-offs between crops.
     Random agent expected score: ~0.20
     """
     return {
@@ -73,10 +74,10 @@ def _multi_field_allocation() -> Dict[str, Any]:
         "difficulty": "hard",
         "num_fields": 3,
         "crop_types": ["wheat", "corn", "tomatoes"],
-        "initial_moisture": [50.0, 45.0, 40.0],
+        "initial_moisture": [40.0, 35.0, 30.0],
         "num_days": 10,
         "noisy": True,
-        "water_budget": 100.0,
+        "water_budget": 60.0,
         "task_seed": TASK_SEED,
     }
 
@@ -106,5 +107,5 @@ def compute_score(task_name: str, crop_health: list, water_used: float,
     else:
         score = 0.5
 
-    # Strictly within (0.0, 1.0) — validator rejects 0.0 and 1.0 exactly
-    return max(0.001, min(0.999, score))
+    # Strictly within (0.01, 0.99) per validator requirements
+    return max(0.01, min(0.99, score))
